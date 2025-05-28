@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import os, sys, requests, yfinance as yf
@@ -111,9 +110,23 @@ def fetch_snapshot(ticker: str) -> Dict[str, Any]:
         fmp_km.get("forwardPE")
     )
     
-    if pe_fwd is None and pe_ttm is not None and earnings_yoy is not None and earnings_yoy > 0:
-        estimated_growth = 1 + (earnings_yoy / 100)
-        pe_fwd = pe_ttm / estimated_growth
+    # If forward P/E is not available, we can estimate it based on current P/E and growth rates
+    if pe_fwd is None and pe_ttm is not None and earnings_yoy is not None:
+        # Handle both positive and negative growth
+        if earnings_yoy > 0:
+            # For positive growth: adjust P/E downward based on expected earnings increase
+            estimated_growth = 1 + (earnings_yoy / 100)
+            pe_fwd = pe_ttm / estimated_growth
+        elif earnings_yoy < 0:
+            # For negative growth: adjust P/E upward based on expected earnings decrease
+            # The more negative the growth, the higher the forward P/E
+            estimated_decline = 1 + (earnings_yoy / 100)  # Will be < 1 for negative growth
+            if estimated_decline > 0:  # Protect against division by zero or negative
+                pe_fwd = pe_ttm / estimated_decline
+            else:
+                # If estimated decline would cause earnings to go negative or zero,
+                # we can't reasonably estimate a forward P/E
+                pe_fwd = None
     
     price_to_sales = finnhub.get("psTTM") or fmp_km.get("priceToSalesRatioTTM")
     
@@ -178,7 +191,7 @@ if __name__ == "__main__":
     import pprint, argparse
 
     parser = argparse.ArgumentParser(description="Fetch snapshot for ticker")
-    parser.add_argument("ticker", nargs="?", default="AAPL")
+    parser.add_argument("ticker", nargs="?", default="TSLA")
     args = parser.parse_args()
 
     pprint.pprint(fetch_snapshot(args.ticker.upper()))
