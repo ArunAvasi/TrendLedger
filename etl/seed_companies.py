@@ -22,42 +22,40 @@ from backend.models import Company
 
 WIKI_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 
-def fetch_sp500_tickers() -> list[str]:
-    """Scrape Wikipedia’s table and return a list of ticker symbols."""
+def fetch_sp500_companies() -> list[tuple[str, str]]:
+    """Scrape Wikipedia’s table and return a list of (ticker, company_name)."""
     resp = requests.get(WIKI_URL)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    # The table has id="constituents"
     table = soup.find("table", {"id": "constituents"})
     if not table:
         raise RuntimeError("Could not find the S&P 500 table on Wikipedia")
 
-    tickers = []
-    # First <td> of each <tr> in <tbody> is the ticker
+    results: list[tuple[str, str]] = []
     for row in table.tbody.find_all("tr"):
         cols = row.find_all("td")
         if cols:
-            ticker = cols[0].get_text(strip=True)
-            # Wikipedia uses periods in tickers like BRK.B → convert to BRK-B
-            ticker = ticker.replace(".", "-")
-            tickers.append(ticker)
-    return tickers
+            ticker = cols[0].get_text(strip=True).replace(".", "-")
+            name = cols[1].get_text(strip=True)
+            results.append((ticker, name))
+    return results
 
 def main():
-    tickers = fetch_sp500_tickers()
+    companies = fetch_sp500_companies()
     session = Session()
     added = 0
 
-    for t in tickers:
-        if not session.query(Company).filter_by(ticker=t).first():
-            session.add(Company(ticker=t))
+    for ticker, name in companies:
+        exists = session.query(Company).filter_by(ticker=ticker).first()
+        if not exists:
+            session.add(Company(ticker=ticker, name=name))
             added += 1
 
     session.commit()
     session.close()
 
-    print(f"✅ Seeded {added} new companies (out of {len(tickers)}).")
+    print(f"✅ Seeded {added} new companies (out of {len(companies)}).")
 
 if __name__ == "__main__":
     main()

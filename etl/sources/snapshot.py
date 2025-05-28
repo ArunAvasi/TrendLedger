@@ -1,15 +1,4 @@
-#!/usr/bin/env python3
-"""
-Fetch CompanySnapshot metrics using **free** data sources only:
-  • **Finnhub** – core valuation & profitability ratios (requires FINNHUB_API_KEY in .env)
-  • **yfinance** – balance-sheet rows & dividend dates (no key)
-  • **Financial Modeling Prep** – fallback for metrics Finnhub omits, e.g. EV/EBITDA, price-to-book, forward P/E, cash & debt (requires FMP_API_KEY in .env, free tier ≤250 calls/day)
 
-Returns a dict containing **exactly** the fields defined in backend.models.CompanySnapshot.
-
-Run for a quick test:
-    python etl/sources/snapshot.py  # defaults to ticker AAPL
-"""
 from __future__ import annotations
 
 import os, sys, requests, yfinance as yf
@@ -18,9 +7,6 @@ from datetime import datetime
 from dotenv import load_dotenv
 from typing import Dict, Any
 
-# ---------------------------------------------------------------------------
-# Environment & constants
-# ---------------------------------------------------------------------------
 project_root = Path(__file__).parent.parent.parent.resolve()
 sys.path.append(str(project_root))
 load_dotenv(project_root / ".env")
@@ -31,9 +17,7 @@ FINNHUB_URL = "https://finnhub.io/api/v1"
 FMP_KEY = os.getenv("FMP_API_KEY")
 FMP_URL = "https://financialmodelingprep.com/api/v3"
 
-# ---------------------------------------------------------------------------
-# Helpers for each provider
-# ---------------------------------------------------------------------------
+
 
 def _finnhub_metric(ticker: str) -> Dict[str, Any]:
     if not FINNHUB_KEY:
@@ -109,9 +93,6 @@ def _yfinance_balance_dividend(ticker: str) -> Dict[str, Any]:
         print(f"yfinance error: {e}")
     return res
 
-# ---------------------------------------------------------------------------
-# Main fetch routine
-# ---------------------------------------------------------------------------
 
 def fetch_snapshot(ticker: str) -> Dict[str, Any]:
     finnhub = _finnhub_metric(ticker)
@@ -119,29 +100,23 @@ def fetch_snapshot(ticker: str) -> Dict[str, Any]:
     fmp_km  = _fmp_key_metrics(ticker)
     fmp_bs  = _fmp_balance_sheet(ticker)
 
-    # Value metrics
     market_cap     = finnhub.get("marketCapitalization") or fmp_km.get("marketCapTTM")
     pe_ttm         = finnhub.get("peTTM") or fmp_km.get("peRatioTTM")
     
-    # Get earnings and revenue growth first since they're used for forward P/E estimation
     earnings_yoy = finnhub.get("epsGrowthQuarterlyYoy") or fmp_km.get("epsGrowthQuarterlyYoy")
     revenue_yoy  = finnhub.get("revenueGrowthQuarterlyYoy") or fmp_km.get("revenueGrowthQuarterlyYOY")
     
-    # Forward P/E ratio - try multiple sources
     pe_fwd = (
         finnhub.get("forwardPE") or 
         fmp_km.get("forwardPE")
     )
     
-    # If forward P/E is not available, we can estimate it based on current P/E and growth rates
     if pe_fwd is None and pe_ttm is not None and earnings_yoy is not None and earnings_yoy > 0:
-        # Simple estimate: current P/E adjusted for growth
         estimated_growth = 1 + (earnings_yoy / 100)
         pe_fwd = pe_ttm / estimated_growth
     
     price_to_sales = finnhub.get("psTTM") or fmp_km.get("priceToSalesRatioTTM")
     
-    # EV/EBITDA - FMP provides this directly as enterpriseValueOverEBITDATTM
     ev_to_ebitda = (
         fmp_km.get("enterpriseValueOverEBITDATTM") or
         (
@@ -152,7 +127,6 @@ def fetch_snapshot(ticker: str) -> Dict[str, Any]:
         )
     )
     
-    # Price to Book ratio - try multiple sources
     price_to_book = (
         finnhub.get("pbTTM") or 
         fmp_km.get("priceToBookRatioTTM") or 
@@ -162,13 +136,8 @@ def fetch_snapshot(ticker: str) -> Dict[str, Any]:
     
     fcf_yield = finnhub.get("currentEv/freeCashFlowTTM") or fmp_km.get("freeCashFlowYieldTTM")
 
-    # Margins & growth
     profit_margin        = finnhub.get("netProfitMarginTTM") or fmp_km.get("netProfitMarginTTM")
     operating_margin_ttm = finnhub.get("operatingMarginTTM") or fmp_km.get("operatingMarginTTM")
-    
-    # Already calculated these above
-    # earnings_yoy         = finnhub.get("epsGrowthQuarterlyYoy") or fmp_km.get("epsGrowthQuarterlyYoy")
-    # revenue_yoy          = finnhub.get("revenueGrowthQuarterlyYoy") or fmp_km.get("revenueGrowthQuarterlyYOY")
 
     # Balance
     cash     = yfin["cash"]  or fmp_bs.get("cashAndCashEquivalents")
@@ -205,9 +174,6 @@ def fetch_snapshot(ticker: str) -> Dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------
-# CLI test
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import pprint, argparse
 
