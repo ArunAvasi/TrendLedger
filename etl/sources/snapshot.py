@@ -190,7 +190,7 @@ def fetch_snapshot(ticker: str) -> Dict[str, Any]:
 if __name__ == "__main__":
     import pprint, argparse
 
-    parser = argparse.ArgumentParser(description="Fetch snapshot for ticker")
+    parser = argparse.ArgumentParser(description="Fech snapshot for ticker")
     parser.add_argument("ticker", nargs="?", default="TSLA")
     args = parser.parse_args()
 
