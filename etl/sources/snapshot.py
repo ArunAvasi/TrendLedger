@@ -187,11 +187,6 @@ def fetch_snapshot(ticker: str) -> Dict[str, Any]:
     }
 
 
-# Snapshot module to fetch financial metrics for a given ticker
-# This module uses multiple APIs to gather financial data:
-# Fetch snapshot for a given ticker
-
-
 if __name__ == "__main__":
     import pprint, argparse
 
