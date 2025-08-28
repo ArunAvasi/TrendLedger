@@ -1,33 +1,47 @@
 #!/usr/bin/env python3
-"""
-Seed the `companies` table with the current S&P 500 list
-by scraping Wikipedia, so no API key is needed.
-"""
-
 from pathlib import Path
-import sys
+import sys, time
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
-# allow imports from project root
 project_root = Path(__file__).parent.parent.resolve()
 sys.path.append(str(project_root))
-
-# load .env for DB creds
 load_dotenv(project_root / ".env")
 
-from etl.config     import Session
+from etl.config import Session
 from backend.models import Company
 
+from sqlalchemy.dialects.postgresql import insert as pg_insert  # Postgres upsert
+
 WIKI_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    )
+}
+
+def get_with_retries(url, headers, timeout=15, attempts=3):
+    last = None
+    for i in range(attempts):
+        try:
+            r = requests.get(url, headers=headers, timeout=timeout)
+            if r.status_code in (403, 429) and i < attempts - 1:
+                time.sleep(2 * (i + 1))
+                continue
+            r.raise_for_status()
+            return r
+        except Exception as e:
+            last = e
+            if i < attempts - 1:
+                time.sleep(2 * (i + 1))
+    raise RuntimeError(f"Failed to fetch {url}: {last}")
 
 def fetch_sp500_companies() -> list[tuple[str, str]]:
-    """Scrape Wikipedia’s table and return a list of (ticker, company_name)."""
-    resp = requests.get(WIKI_URL)
-    resp.raise_for_status()
+    """Return list of (ticker, name)."""
+    resp = get_with_retries(WIKI_URL, HEADERS, timeout=15, attempts=3)
     soup = BeautifulSoup(resp.text, "html.parser")
-
     table = soup.find("table", {"id": "constituents"})
     if not table:
         raise RuntimeError("Could not find the S&P 500 table on Wikipedia")
@@ -42,20 +56,21 @@ def fetch_sp500_companies() -> list[tuple[str, str]]:
     return results
 
 def main():
+    t0 = time.time()
+    print("Fetching S&P 500 list...")
     companies = fetch_sp500_companies()
+    print(f"Fetched {len(companies)} companies in {time.time() - t0:.2f}s")
+
     session = Session()
-    added = 0
-
-    for ticker, name in companies:
-        exists = session.query(Company).filter_by(ticker=ticker).first()
-        if not exists:
-            session.add(Company(ticker=ticker, name=name))
-            added += 1
-
-    session.commit()
-    session.close()
-
-    print(f"✅ Seeded {added} new companies (out of {len(companies)}).")
+    try:
+        # Bulk UPSERT in one statement: INSERT ... ON CONFLICT DO NOTHING
+        rows = [{"ticker": t, "name": n} for t, n in companies]
+        stmt = pg_insert(Company).values(rows).on_conflict_do_nothing(index_elements=["ticker"])
+        result = session.execute(stmt)  # rowcount counts rows actually inserted
+        session.commit()
+        print(f"✅ Seeded {result.rowcount or 0} new companies (out of {len(companies)}).")
+    finally:
+        session.close()
 
 if __name__ == "__main__":
     main()
